@@ -1,11 +1,12 @@
 import requests
 import json
 import re
-from netifaces import ifaddresses
+from netifaces import ifaddresses, AF_INET, AF_LINK
 from sh import grep, netstat
 from urlparse import urlparse
 from datetime import timedelta
 from settings import settings
+import socket
 
 # This will only work on the Raspberry Pi,
 # so let's wrap it in a try/except so that
@@ -37,18 +38,21 @@ def validate_url(string):
 
 
 def get_node_ip():
-    """Returns the node's IP, for the interface
+    """Returns the node's IP and MAC address, for the interface
     that is being used as the default gateway.
     This shuld work on both MacOS X and Linux."""
 
     try:
         default_interface = grep(netstat('-nr'), '-e', '^default', '-e' '^0.0.0.0').split()[-1]
-        my_ip = ifaddresses(default_interface)[2][0]['addr']
-        return my_ip
+        #my_ip = ifaddresses(default_interface)[2][0]['addr']
+        my_ip = ifaddresses(default_interface)[AF_INET][0]['addr']
+        my_mac = ifaddresses(default_interface)[AF_LINK][0]['addr']
+        return (my_ip, my_mac)
+        #return my_ip
     except:
         pass
 
-    return None
+    return (None, None)
 
 
 def get_video_duration(file):
@@ -104,3 +108,63 @@ def url_fails(url):
         return True
     else:
         return False
+
+from bottle import request, response
+from bottle import HTTPResponse
+from settings import settings
+
+def request_server_url():
+  #print('ext_proto : %s' % settings['ext_proto'])
+  #print('ext_ip : %s' % settings['ext_ip'])
+  #print('ext_port : %s' % settings['ext_port'])
+
+  try:
+    if settings['ext_proto'] == 'https':
+      proto = 'https://'
+    else:
+      proto = 'http://'
+  except:
+      proto = 'http://'
+
+  try:
+    port_int = int(settings['ext_port'])
+    if port_int > 0:
+      port = ':%s' % port_int
+    elif port_int == 0:
+      port = ''
+    else:
+      #invalid/negative value
+      port = ':' + request.get('SERVER_PORT')
+  except:
+      # field not defined, or non-numerical
+      port = ':' + request.get('SERVER_PORT')
+
+  try:
+    ip_num = socket.inet_aton(settings['ext_ip']) #just to make sure it's valid, and cause an exception otherwise
+    ip = settings['ext_ip']
+  except:
+    ip, mac = get_node_ip()
+
+  return proto + ip + port
+
+
+def redirect(url, code=None):
+  """ Aborts execution and causes a 303 or 302 redirect, depending on
+  the HTTP protocol version. """
+  print('Using private redirector')
+  if not code:
+    code = 303 if request.get('SERVER_PROTOCOL') == "HTTP/1.1" else 302
+  res = response.copy(cls=HTTPResponse)
+  res.status = code
+  res.body = ""
+  #res.set_header('Location', urljoin(request.url, url))
+  #print('Request_url: %s' % request.url)
+  #for a in request:
+  #  print('%s : %s' % (a, request.environ.get(a)) )
+  #Quick-n-Dirty: use relative URL. This conflicts with the HTTP/1.1 RFC!!
+  #res.set_header('Location', url)
+
+  full_url = request_server_url() + url
+  print('Redirecting to: %s' % full_url)
+  res.set_header('Location', full_url)
+  raise res

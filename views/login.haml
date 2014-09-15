@@ -1,0 +1,60 @@
+!!! 5
+%html
+
+  %head
+    %meta(charset="utf-8")
+    %title Screenly OSE
+
+    %link(href="/static/css/bootstrap.css", rel="stylesheet")
+    %link(href="/static/css/screenly.css", rel="stylesheet")
+    %script(src="/static/js/jquery-1.9.1.min.js")
+
+  %body
+
+    .navbar.navbar-fixed-top
+      .navbar-inner
+        .container
+          %a.brand(href="/")
+            %strong Screenly
+            %span OSE
+
+          %ul.nav.pull-right
+            - if user:
+              %li
+                %a(href="/auth/logout")
+                  %i.icon-log-out.icon-white
+                  Logout ${user}
+
+    .container
+      .row
+        .span12
+          %h1.page-header
+            Login
+
+
+          - if flash:
+            <div class="alert alert-${flash['class']}">
+              = flash['message']
+            </div>
+
+          %form.form-horizontal(method="post")
+            .control-group
+              %label.control-label Username
+              .controls
+                %input.span1(type="text", name="username", value=put_username)
+
+            .control-group
+              %label.control-label Password
+              .controls
+                %input.span1(type="password", name="password", value=put_password)
+
+            .form-actions
+              %input.btn.btn-primary(type="submit", value="Login")
+
+
+    #footer
+      .container
+        .copy
+          &copy; <strong>2012-2014.</strong> WireLoad, Inc.
+        %a(id="wireload-logo", href="http://wireload.net/")
+          %img(src="/static/img/wireload-logo.png", alt="WireLoad")

@@ -190,6 +190,18 @@
               %a(href="/system_info")
                 %i.icon-tasks.icon-white
                 System Info
+            - if use_auth:
+              %li.divider-vertical
+              - if username:
+                %li
+                  %a(href="/auth/logout")
+                    %i.icon-user.icon-white
+                    Logout ${username}
+              - else:
+                %li
+                  %a(href="/auth/login")
+                    %i.icon-user.icon-white
+                    Login
 
     .container
       .row

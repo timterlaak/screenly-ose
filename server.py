@@ -23,6 +23,7 @@ import uuid
 from bottle import route, run, request, error, static_file, response
 from bottle import HTTPResponse
 from bottlehaml import haml_template
+import bottlesession
 
 import db
 import queries
@@ -33,12 +34,39 @@ from utils import get_node_ip
 from utils import validate_url
 from utils import url_fails
 from utils import get_video_duration
+from utils import redirect, request_server_url
 
 from settings import settings, DEFAULTS
+
+################################
+# Session Mgmt init
+################################
+
+def get_session_manager():
+    username = settings['username']
+    password = settings['password']
+    # Initialize session manager
+    if not username or not password:
+        print 'Not using authentication in web interface.'
+        print 'To enable authentication in web interface,'
+        print ' specify both a username and a password in the config-file.'
+        session_manager = bottlesession.PreconfiguredSession({'valid':True, 'name': '', 'new': False})
+    else:
+        session_manager = bottlesession.MemorySession()
+        print 'Using authentication in web interface.'
+    return session_manager
+
+session_manager = get_session_manager()
+if isinstance(session_manager, bottlesession.PreconfiguredSession):
+    use_auth = False
+else:
+    use_auth = True
+valid_user = bottlesession.authenticator(session_manager)
+
+
 ################################
 # Utilities
 ################################
-
 
 def make_json_response(obj):
     response.content_type = "application/json"
@@ -91,6 +119,12 @@ def template(template_name, **context):
     # Add global contexts
     context['up_to_date'] = is_up_to_date()
     context['default_duration'] = settings['default_duration']
+    #context['username'] = request.environ['REMOTE_USER']
+    context['use_auth'] = use_auth
+    if request.environ.has_key('REMOTE_USER'):
+        context['username'] = request.environ['REMOTE_USER']
+    else:
+        context['username'] = None
 
     return haml_template(template_name, **context)
 
@@ -195,6 +229,7 @@ def prepare_asset(request):
 
 
 @route('/api/assets', method="GET")
+@valid_user()
 def api_assets():
     assets = assets_helper.read(db_conn)
     return make_json_response(assets)
@@ -215,6 +250,7 @@ def api(view):
 
 
 @route('/api/assets', method="POST")
+@valid_user()
 @api
 def add_asset():
     asset = prepare_asset(request)
@@ -224,18 +260,21 @@ def add_asset():
 
 
 @route('/api/assets/:asset_id', method="GET")
+@valid_user()
 @api
 def edit_asset(asset_id):
     return assets_helper.read(db_conn, asset_id)
 
 
 @route('/api/assets/:asset_id', method=["PUT", "POST"])
+@valid_user()
 @api
 def edit_asset(asset_id):
     return assets_helper.update(db_conn, asset_id, prepare_asset(request))
 
 
 @route('/api/assets/:asset_id', method="DELETE")
+@valid_user()
 @api
 def remove_asset(asset_id):
     asset = assets_helper.read(db_conn, asset_id)
@@ -249,6 +288,7 @@ def remove_asset(asset_id):
 
 
 @route('/api/assets/order', method="POST")
+@valid_user()
 @api
 def playlist_order():
     "Receive a list of asset_ids in the order they should be in the playlist"
@@ -261,11 +301,13 @@ def playlist_order():
 
 
 @route('/')
+@valid_user()
 def viewIndex():
     return template('index')
 
 
 @route('/settings', method=["GET", "POST"])
+@valid_user()
 def settings_page():
 
     context = {'flash': None}
@@ -290,6 +332,7 @@ def settings_page():
 
 
 @route('/system_info')
+@valid_user()
 def system_info():
     viewer_log_file = '/tmp/screenly_viewer.log'
     if path.exists(viewer_log_file):
@@ -317,17 +360,70 @@ def system_info():
     return template('system_info', viewlog=viewlog, loadavg=loadavg, free_space=free_space, uptime=system_uptime, display_info=display_info)
 
 
+# NO authentication for the splash page!
 @route('/splash_page')
 def splash_page():
-    my_ip = get_node_ip()
+    (my_ip, my_mac) = get_node_ip()
     if my_ip:
         ip_lookup = True
-        url = "http://{}:{}".format(my_ip, settings.get_listen_port())
+        url = request_server_url()
+        mac_info = "MAC address: {}".format(my_mac)
     else:
         ip_lookup = False
         url = "Unable to look up your installation's IP address."
+        mac_info = ""
 
-    return template('splash_page', ip_lookup=ip_lookup, url=url)
+    return template('splash_page', ip_lookup=ip_lookup, url=url, mac_info = mac_info )
+
+
+@route('/auth/login', method='GET')
+def show_login():
+    return template('login')
+
+@route('/auth/login', method='POST')
+def do_login():
+    username = request.POST.get('username')
+    password = request.POST.get('password')
+
+    session = session_manager.get_session()
+    session['valid'] = False
+    context = {'flash': None}
+
+    if session['new']:
+        context['flash'] = {'class': "error", 'message': "Cookies must be enabled to be able to authenticate."}
+        return template('login', **context)
+
+    if not username or not password:
+        context['flash'] = {'class': "error", 'message': "Please specify username and password"}
+        return template('login', **context)
+
+    ref_username = settings['username']
+    ref_password = settings['password']
+    credentials = { ref_username:ref_password, }
+
+    if password and credentials.get(username) == password:
+        session['valid'] = True
+        session['name'] = username
+
+    session_manager.save(session)
+
+    if not session['valid']:
+        context['flash'] = {'class': "error", 'message': "Username or password is invalid"}
+        return template('login', **context)
+
+    redirpath = request.get_cookie('validuserloginredirect')
+    redirect(redirpath)
+
+
+@route('/auth/logout')
+@valid_user()
+def logout():
+    # actually, instead of marking session as invalid, we should just delete it
+    # unfortunately, the session manager does not allow us to do that (yet?)
+    session = session_manager.get_session()
+    session['valid'] = False
+    session_manager.save(session)
+    redirect('/auth/login')
 
 
 @error(403)
@@ -356,6 +452,8 @@ if __name__ == "__main__":
     # Create config dir if it doesn't exist
     if not path.isdir(settings.get_configdir()):
         makedirs(settings.get_configdir())
+
+
 
     with db.conn(settings['database']) as conn:
         global db_conn

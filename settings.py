@@ -14,6 +14,11 @@ DEFAULTS = {
         'database': CONFIG_DIR + 'screenly.db',
         'listen': '0.0.0.0:8080',
         'assetdir': 'screenly_assets',
+        'username': '',
+        'password': '',
+        'ext_proto': 'http',
+        'ext_ip': None,
+        'ext_port': None,
     },
     'viewer': {
         'show_splash': True,
